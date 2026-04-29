@@ -2095,6 +2095,111 @@ func TestMDMTokenUpdateUserEnrollmentManagedAppleID(t *testing.T) {
 	})
 }
 
+// TestMDMTokenUpdateUserEnrollmentSetupExperience verifies that
+// Account-Driven User Enrolled (BYOD) iOS/iPadOS hosts go through the same
+// setup-experience-enqueue branch that manual iOS/iPadOS hosts do on first
+// TokenUpdate (#44008). Before this change, only `mdm.Device` was matched
+// in the non-DEP iOS/iPadOS branch, so user-enrolled hosts never got
+// setup-experience apps installed automatically.
+func TestMDMTokenUpdateUserEnrollmentSetupExperience(t *testing.T) {
+	ctx := context.Background()
+	ds := new(mock.Store)
+	mdmStorage := &mdmmock.MDMAppleStore{}
+	pushFactory, _ := newMockAPNSPushProviderFactory()
+	pusher := nanomdm_pushsvc.New(
+		mdmStorage,
+		mdmStorage,
+		pushFactory,
+		NewNanoMDMLogger(slog.New(slog.NewJSONHandler(os.Stdout, nil))),
+	)
+	cmdr := apple_mdm.NewMDMAppleCommander(mdmStorage, pusher)
+	mdmLifecycle := mdmlifecycle.New(ds, slog.New(slog.DiscardHandler), func(_ context.Context, _ *fleet.User, _ fleet.ActivityDetails) error { return nil })
+	svc := MDMAppleCheckinAndCommandService{
+		ds:           ds,
+		mdmLifecycle: mdmLifecycle,
+		commander:    cmdr,
+		logger:       slog.New(slog.DiscardHandler),
+	}
+
+	const (
+		enrollID = "USER-ENROLL-1"
+		hostID   = uint(8888)
+	)
+
+	ds.AppConfigFunc = func(context.Context) (*fleet.AppConfig, error) {
+		return &fleet.AppConfig{}, nil
+	}
+	ds.NewJobFunc = func(_ context.Context, j *fleet.Job) (*fleet.Job, error) {
+		return j, nil
+	}
+	ds.GetMDMIdPAccountByHostUUIDFunc = func(context.Context, string) (*fleet.MDMIdPAccount, error) {
+		return nil, nil
+	}
+	ds.SetHostManagedAppleIDFunc = func(context.Context, uint, string) error {
+		return nil
+	}
+	// !InstalledFromDEP — this is the user-enrollment branch, not the DEP one.
+	ds.GetHostMDMCheckinInfoFunc = func(context.Context, string) (*fleet.HostMDMCheckinInfo, error) {
+		return &fleet.HostMDMCheckinInfo{
+			HostID:           hostID,
+			Platform:         "ios",
+			InstalledFromDEP: false,
+		}, nil
+	}
+
+	doTokenUpdate := func(t *testing.T, enrollType string, tokenUpdateTally int) {
+		t.Helper()
+		ds.GetNanoMDMEnrollmentFunc = func(context.Context, string) (*fleet.NanoEnrollment, error) {
+			return &fleet.NanoEnrollment{
+				Enabled:          true,
+				Type:             enrollType,
+				TokenUpdateTally: tokenUpdateTally,
+			}, nil
+		}
+
+		require.NoError(t, svc.TokenUpdate(
+			&mdm.Request{
+				Context:  ctx,
+				EnrollID: &mdm.EnrollID{ID: enrollID, Type: mdm.UserEnrollmentDevice},
+			},
+			&mdm.TokenUpdate{
+				TokenUpdateEnrollment: mdm.TokenUpdateEnrollment{
+					Enrollment: mdm.Enrollment{UDID: enrollID, EnrollmentID: enrollID},
+				},
+			},
+		))
+	}
+
+	t.Run("first TokenUpdate enqueues setup-experience items", func(t *testing.T) {
+		ds.EnqueueSetupExperienceItemsFuncInvoked = false
+		var gotPlatform, gotPlatformLike, gotHostUUID string
+		ds.EnqueueSetupExperienceItemsFunc = func(_ context.Context, hostPlatform, hostPlatformLike, hostUUID string, _ uint) (bool, error) {
+			gotPlatform = hostPlatform
+			gotPlatformLike = hostPlatformLike
+			gotHostUUID = hostUUID
+			return true, nil
+		}
+
+		doTokenUpdate(t, mdm.EnrollType(mdm.UserEnrollmentDevice).String(), 1)
+
+		require.True(t, ds.EnqueueSetupExperienceItemsFuncInvoked, "setup-experience must be enqueued for user enrollments on first TokenUpdate")
+		require.Equal(t, "ios", gotPlatform)
+		require.Equal(t, "ios", gotPlatformLike)
+		require.Equal(t, enrollID, gotHostUUID)
+	})
+
+	t.Run("subsequent TokenUpdate does not re-enqueue", func(t *testing.T) {
+		ds.EnqueueSetupExperienceItemsFuncInvoked = false
+		ds.EnqueueSetupExperienceItemsFunc = func(context.Context, string, string, string, uint) (bool, error) {
+			return false, nil
+		}
+
+		doTokenUpdate(t, mdm.EnrollType(mdm.UserEnrollmentDevice).String(), 2)
+
+		require.False(t, ds.EnqueueSetupExperienceItemsFuncInvoked, "second-and-later TokenUpdates must not re-enqueue setup-experience items")
+	})
+}
+
 func TestMDMCheckout(t *testing.T) {
 	ds := new(mock.Store)
 	mdmLifecycle := mdmlifecycle.New(ds, slog.New(slog.DiscardHandler), func(_ context.Context, _ *fleet.User, _ fleet.ActivityDetails) error { return nil })
