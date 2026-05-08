@@ -2011,7 +2011,10 @@ func TestMDMTokenUpdateUserEnrollmentManagedAppleID(t *testing.T) {
 		return false, nil
 	}
 
-	t.Run("UserEnrollmentDevice with UserLongName persists managed_apple_id", func(t *testing.T) {
+	t.Run("UserEnrollmentDevice with linked IDP account persists managed_apple_id", func(t *testing.T) {
+		ds.GetMDMIdPAccountByHostUUIDFunc = func(context.Context, string) (*fleet.MDMIdPAccount, error) {
+			return &fleet.MDMIdPAccount{UUID: "idp-uuid", Email: "managed.user@example.com"}, nil
+		}
 		ds.SetHostManagedAppleIDFuncInvoked = false
 		var gotHostID uint
 		var gotMAID string
@@ -2028,11 +2031,7 @@ func TestMDMTokenUpdateUserEnrollmentManagedAppleID(t *testing.T) {
 			},
 			&mdm.TokenUpdate{
 				TokenUpdateEnrollment: mdm.TokenUpdateEnrollment{
-					Enrollment: mdm.Enrollment{
-						UDID:         enrollID,
-						EnrollmentID: enrollID,
-						UserLongName: "managed.user@example.com",
-					},
+					Enrollment: mdm.Enrollment{UDID: enrollID, EnrollmentID: enrollID},
 				},
 			},
 		)
@@ -2042,7 +2041,43 @@ func TestMDMTokenUpdateUserEnrollmentManagedAppleID(t *testing.T) {
 		require.Equal(t, "managed.user@example.com", gotMAID)
 	})
 
-	t.Run("UserEnrollmentDevice without UserLongName does not write managed_apple_id", func(t *testing.T) {
+	t.Run("UserEnrollmentDevice resolves IDP account from Bearer token and persists managed_apple_id", func(t *testing.T) {
+		ds.GetMDMIdPAccountByHostUUIDFunc = func(context.Context, string) (*fleet.MDMIdPAccount, error) {
+			return nil, nil
+		}
+		ds.GetMDMIdPAccountByUUIDFunc = func(_ context.Context, uuid string) (*fleet.MDMIdPAccount, error) {
+			require.Equal(t, "bearer-uuid", uuid)
+			return &fleet.MDMIdPAccount{UUID: "bearer-uuid", Email: "bearer.user@example.com"}, nil
+		}
+		ds.AssociateHostMDMIdPAccountFunc = func(context.Context, string, string) error { return nil }
+		ds.SetHostManagedAppleIDFuncInvoked = false
+		var gotMAID string
+		ds.SetHostManagedAppleIDFunc = func(_ context.Context, _ uint, managedAppleID string) error {
+			gotMAID = managedAppleID
+			return nil
+		}
+
+		err := svc.TokenUpdate(
+			&mdm.Request{
+				Context:       ctx,
+				EnrollID:      &mdm.EnrollID{ID: enrollID, Type: mdm.UserEnrollmentDevice},
+				Authorization: "Bearer bearer-uuid",
+			},
+			&mdm.TokenUpdate{
+				TokenUpdateEnrollment: mdm.TokenUpdateEnrollment{
+					Enrollment: mdm.Enrollment{UDID: enrollID, EnrollmentID: enrollID},
+				},
+			},
+		)
+		require.NoError(t, err)
+		require.True(t, ds.SetHostManagedAppleIDFuncInvoked)
+		require.Equal(t, "bearer.user@example.com", gotMAID)
+	})
+
+	t.Run("UserEnrollmentDevice without IDP account does not write managed_apple_id", func(t *testing.T) {
+		ds.GetMDMIdPAccountByHostUUIDFunc = func(context.Context, string) (*fleet.MDMIdPAccount, error) {
+			return nil, nil
+		}
 		ds.SetHostManagedAppleIDFuncInvoked = false
 		ds.SetHostManagedAppleIDFunc = func(context.Context, uint, string) error {
 			return nil
@@ -2063,7 +2098,10 @@ func TestMDMTokenUpdateUserEnrollmentManagedAppleID(t *testing.T) {
 		require.False(t, ds.SetHostManagedAppleIDFuncInvoked)
 	})
 
-	t.Run("Device enrollment never writes managed_apple_id even with UserLongName", func(t *testing.T) {
+	t.Run("Device enrollment never writes managed_apple_id even with linked IDP account", func(t *testing.T) {
+		ds.GetMDMIdPAccountByHostUUIDFunc = func(context.Context, string) (*fleet.MDMIdPAccount, error) {
+			return &fleet.MDMIdPAccount{UUID: "idp-uuid", Email: "ignored@example.com"}, nil
+		}
 		ds.SetHostManagedAppleIDFuncInvoked = false
 		ds.SetHostManagedAppleIDFunc = func(context.Context, uint, string) error {
 			return nil
@@ -2082,11 +2120,7 @@ func TestMDMTokenUpdateUserEnrollmentManagedAppleID(t *testing.T) {
 			},
 			&mdm.TokenUpdate{
 				TokenUpdateEnrollment: mdm.TokenUpdateEnrollment{
-					Enrollment: mdm.Enrollment{
-						UDID:         enrollID,
-						EnrollmentID: enrollID,
-						UserLongName: "ignored@example.com",
-					},
+					Enrollment: mdm.Enrollment{UDID: enrollID, EnrollmentID: enrollID},
 				},
 			},
 		)

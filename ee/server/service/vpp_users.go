@@ -75,27 +75,28 @@ func (svc *Service) ensureVPPClientUser(ctx context.Context, host *fleet.Host, t
 		return "", ctxerr.Wrap(ctx, err, "calling Apple VPP create-users")
 	}
 
-	// Apple may return per-user errors with HTTP 200; bubble those up while
-	// keeping the Fleet row in 'pending' so retries can redo the call.
-	var result *vpp.CreateUsersResult
+	// Apple's /users/create is asynchronous in the v2 API: a 200 with eventId
+	// means user registration has been queued, and the per-user payload is
+	// returned later (separate /users/get poll, deferred to a follow-up
+	// subtask). If Apple did echo a per-user entry in the synchronous response,
+	// surface any per-user error; otherwise treat the eventId as success since
+	// downstream associate-assets uses our clientUserId, which Apple resolves
+	// once registration completes.
 	for i := range resp.Users {
-		if resp.Users[i].ClientUserId == clientUserID {
-			result = &resp.Users[i]
-			break
+		u := &resp.Users[i]
+		if u.ClientUserId != clientUserID {
+			continue
 		}
-	}
-	if result == nil || result.HasError() {
-		_ = svc.ds.InsertVPPClientUser(ctx, &fleet.VPPClientUser{
-			VPPTokenID:     token.ID,
-			ManagedAppleID: managedAppleID,
-			ClientUserID:   clientUserID,
-			Status:         fleet.VPPClientUserStatusPending,
-		})
-		if result == nil {
-			return "", ctxerr.Errorf(ctx, "Apple VPP create-users response missing entry for clientUserId %s", clientUserID)
+		if u.HasError() {
+			_ = svc.ds.InsertVPPClientUser(ctx, &fleet.VPPClientUser{
+				VPPTokenID:     token.ID,
+				ManagedAppleID: managedAppleID,
+				ClientUserID:   clientUserID,
+				Status:         fleet.VPPClientUserStatusPending,
+			})
+			return "", ctxerr.Errorf(ctx, "Apple VPP create-users returned error for managed apple id %q: %s (code %d)",
+				managedAppleID, u.ErrorMessage, u.ErrorNumber)
 		}
-		return "", ctxerr.Errorf(ctx, "Apple VPP create-users returned error for managed apple id %q: %s (code %d)",
-			managedAppleID, result.ErrorMessage, result.ErrorNumber)
 	}
 
 	row := &fleet.VPPClientUser{
@@ -104,9 +105,12 @@ func (svc *Service) ensureVPPClientUser(ctx context.Context, host *fleet.Host, t
 		ClientUserID:   clientUserID,
 		Status:         fleet.VPPClientUserStatusRegistered,
 	}
-	if result.UserId != "" {
-		appleUserID := result.UserId
-		row.AppleUserID = &appleUserID
+	for i := range resp.Users {
+		if resp.Users[i].ClientUserId == clientUserID && resp.Users[i].UserId != "" {
+			appleUserID := resp.Users[i].UserId
+			row.AppleUserID = &appleUserID
+			break
+		}
 	}
 	if err := svc.ds.InsertVPPClientUser(ctx, row); err != nil {
 		return "", ctxerr.Wrap(ctx, err, "persisting registered vpp client user")

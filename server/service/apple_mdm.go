@@ -3859,13 +3859,14 @@ func (svc *MDMAppleCheckinAndCommandService) TokenUpdate(r *mdm.Request, m *mdm.
 		}
 	}
 
-	var acctUUID string
+	var acctUUID, managedAppleID string
 	idp, err := svc.ds.GetMDMIdPAccountByHostUUID(r.Context, r.ID)
 	if err != nil {
 		return ctxerr.Wrap(r.Context, err, "getting idp account")
 	}
 	if idp != nil {
 		acctUUID = idp.UUID
+		managedAppleID = idp.Email
 	}
 
 	// User (Device) enrollments, also known as Account Driven enrollments or BYOD enrollments,
@@ -3883,6 +3884,7 @@ func (svc *MDMAppleCheckinAndCommandService) TokenUpdate(r *mdm.Request, m *mdm.
 				"host_uuid", r.ID, "account_uuid", accountUUID)
 		} else {
 			acctUUID = idpAccount.UUID
+			managedAppleID = idpAccount.Email
 			err = svc.ds.AssociateHostMDMIdPAccount(r.Context, r.ID, acctUUID)
 			if err != nil {
 				return ctxerr.Wrap(r.Context, err, "associating host with idp account")
@@ -3890,13 +3892,14 @@ func (svc *MDMAppleCheckinAndCommandService) TokenUpdate(r *mdm.Request, m *mdm.
 		}
 	}
 
-	// For Account-Driven User Enrollment (BYOD iOS/iPadOS), Apple includes the
-	// Managed Apple ID in the TokenUpdate UserLongName. Persist it on host_mdm
-	// so VPP user-provisioning and asset-association can address the user
-	// directly rather than the device serial. Authenticate has already created
-	// the host_mdm row before TokenUpdate fires.
-	if r.Type == mdm.UserEnrollmentDevice && m.UserLongName != "" {
-		if err := svc.ds.SetHostManagedAppleID(r.Context, info.HostID, m.UserLongName); err != nil {
+	// For Account-Driven User Enrollment (BYOD iOS/iPadOS), persist the Managed
+	// Apple ID on host_mdm so VPP user-provisioning and asset-association can
+	// address the user directly rather than the device serial. The canonical
+	// source is the IDP account email resolved from the OAuth Bearer token at
+	// enrollment; Apple does not reliably populate UserLongName for User
+	// Enrollment so we don't fall back to it.
+	if r.Type == mdm.UserEnrollmentDevice && managedAppleID != "" {
+		if err := svc.ds.SetHostManagedAppleID(r.Context, info.HostID, managedAppleID); err != nil {
 			return ctxerr.Wrap(r.Context, err, "setting managed apple id")
 		}
 	}
