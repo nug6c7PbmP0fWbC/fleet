@@ -6,10 +6,10 @@ import (
 )
 
 func init() {
-	MigrationClient.AddMigration(Up_20260429000923, Down_20260429000923)
+	MigrationClient.AddMigration(Up_20260512173250, Down_20260512173250)
 }
 
-func Up_20260429000923(tx *sql.Tx) error {
+func Up_20260512173250(tx *sql.Tx) error {
 	if _, err := tx.Exec(`
 		ALTER TABLE host_mdm
 		ADD COLUMN managed_apple_id VARCHAR(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL AFTER fleet_enroll_ref
@@ -19,6 +19,6 @@ func Up_20260429000923(tx *sql.Tx) error {
 	return nil
 }
 
-func Down_20260429000923(tx *sql.Tx) error {
+func Down_20260512173250(tx *sql.Tx) error {
 	return nil
 }

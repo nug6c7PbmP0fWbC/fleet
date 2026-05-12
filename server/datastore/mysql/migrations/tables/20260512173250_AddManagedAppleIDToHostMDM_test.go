@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestUp_20260429000923(t *testing.T) {
+func TestUp_20260512173250(t *testing.T) {
 	db := applyUpToPrev(t)
 
 	// Pre-existing rows have no managed_apple_id concept.
