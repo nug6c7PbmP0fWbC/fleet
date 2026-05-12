@@ -3208,6 +3208,7 @@ func testVPPClientUsers(t *testing.T, ds *Datastore) {
 	rowsB, err := ds.ListVPPClientUsersForToken(ctx, tokenBDB.ID)
 	require.NoError(t, err)
 	require.Empty(t, rowsB)
+}
 
 // testBackfillVPPAppCountriesLowestIDWins guards the deterministic
 // lowest-id-wins behavior of the backfill SQL when multiple eligible
