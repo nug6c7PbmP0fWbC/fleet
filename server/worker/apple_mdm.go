@@ -58,7 +58,7 @@ func (a *AppleMDM) Name() string {
 type appleMDMArgs struct {
 	Task     AppleMDMTask `json:"task"`
 	HostUUID string       `json:"host_uuid"`
-	TeamID   *uint        `json:"team_id,omitempty"`
+	TeamID   *uint        `json:"team_id,omitempty"` //nolint:apiparamcheck
 	// EnrollReference is the UUID of the MDM IdP account used to enroll the
 	// device. It is used to set the username and full name of the user
 	// associated with the device.
@@ -247,10 +247,7 @@ func (a *AppleMDM) runPostDEPEnrollment(ctx context.Context, args appleMDMArgs) 
 		}
 	}
 
-	const (
-		fleetAdminShortName = "_fleetadmin"
-		fleetAdminFullName  = "Fleet Admin"
-	)
+	const fleetAdminFullName = "Fleet Admin"
 
 	// Only send AccountConfiguration for macOS devices.
 	if isMacOS(args.Platform) && (ssoEnabled || managedAdminAccountEnabled) {
@@ -263,7 +260,7 @@ func (a *AppleMDM) runPostDEPEnrollment(ctx context.Context, args appleMDMArgs) 
 				return err
 			}
 			adminAccount = &apple_mdm.AdminAccountConfig{
-				ShortName:    fleetAdminShortName,
+				ShortName:    fleet.ManagedLocalAccountUsername,
 				FullName:     fleetAdminFullName,
 				PasswordHash: passwordHash,
 				Hidden:       true,
